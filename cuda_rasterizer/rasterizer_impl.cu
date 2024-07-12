@@ -17,7 +17,7 @@
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include <cub/cub.cuh>
+#include <cub/cub.cuh>      // CUDA Unbound
 #include <cub/device/device_radix_sort.cuh>
 #define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
