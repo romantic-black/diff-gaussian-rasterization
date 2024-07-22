@@ -152,6 +152,7 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 }
 
 // Perform initial steps for each Gaussian prior to rasterization.
+// << <(P + 255) / 256, 256 >> >
 template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
 	const float* orig_points,
@@ -188,7 +189,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	radii[idx] = 0;
 	tiles_touched[idx] = 0;
 
-	// Perform near culling, quit if outside.
+	// 判断点是否位于视锥范围内
 	float3 p_view;
 	if (!in_frustum(idx, orig_points, viewmatrix, projmatrix, prefiltered, p_view))
 		return;
@@ -201,7 +202,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters. 
-	const float* cov3D;
+	const float* cov3D;     // 对阵矩阵, 因此是6个值
 	if (cov3D_precomp != nullptr)
 	{
 		cov3D = cov3D_precomp + idx * 6;
@@ -215,7 +216,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// Compute 2D screen-space covariance matrix
 	float3 cov = computeCov2D(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix);
 
-	// Invert covariance (EWA algorithm)
+	// conic: cov2D 的逆矩阵 (EWA algorithm)
 	float det = (cov.x * cov.z - cov.y * cov.y);
 	if (det == 0.0f)
 		return;
@@ -226,15 +227,22 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// 2D covariance matrix). Use extent to compute a bounding rectangle
 	// of screen-space tiles that this Gaussian overlaps with. Quit if
 	// rectangle covers 0 tiles. 
-	float mid = 0.5f * (cov.x + cov.z);
+
+    // TODO: 计算 2D 椭圆的最大半径
+    float mid = 0.5f * (cov.x + cov.z);
 	float lambda1 = mid + sqrt(max(0.1f, mid * mid - det));
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+
+    // 依照半径, 将椭圆扩张为最小矩形, 返回计算矩形面积
+    // point_image: gs点在 image 的坐标
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
 	uint2 rect_min, rect_max;
+    // grid = ((W+16-1)/16, (H+16-1)/16, 1)
+    // 矩形的面积单位不是像素格，而是 16pix * 16pix 的 grid 格，并且会取整
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
-		return;
+		return;     // 跳过无面积点, 不进行渲染
 
 	// If colors have been precomputed, use them, otherwise convert
 	// spherical harmonics coefficients to RGB color.
@@ -258,6 +266,10 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
+// << <grid: ((W+16-1)/16, (H+16-1)/16, 1), block: (16,16,1) >> >
+// __launch_bounds__: 显式指定线程块大小（block size）和寄存器使用限制，从而帮助编译器进行更好的优化
+// - 指定 block size 为 16*16
+// - 与内核调用配置 <<< 线程块数, 线程数 >>> 语法的区别在于, __launch_bounds__ 指导编译器优化, 限制编译器行为, 非必须
 template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
@@ -273,10 +285,13 @@ renderCUDA(
 	float* __restrict__ out_color)
 {
 	// Identify current tile and associated min/max pixel range.
-	auto block = cg::this_thread_block();
-	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
+    // group_index: 线程块索引, thread_index: 线程索引, thread_rank: 线程在线程块中的索引
+	auto block = cg::this_thread_block();   // 返回3维块索引 (x, y, 1)
+	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;   // 每行有几个块
+    // 块的左上角, 右下角对应像素坐标, 注意可能存在不完整
 	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
 	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
+    // 当前线程对应的像素坐标与 id
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
@@ -287,22 +302,28 @@ renderCUDA(
 	bool done = !inside;
 
 	// Load start/end range of IDs to process in bit sorted list.
+    // 注意, 上面的都是图像的像素, range 中的索引是高斯点索引
+    // range: 每个 block 中高斯点的 [开始索引, 结束索引] 按深度排序
+    // ranges: ((W+16-1)1/16, (H+16-1)/16, 2)
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
+    // rounds: 需要几次 for 循环
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 	int toDo = range.y - range.x;
 
 	// Allocate storage for batches of collectively fetched data.
-	__shared__ int collected_id[BLOCK_SIZE];
-	__shared__ float2 collected_xy[BLOCK_SIZE];
+	__shared__ int collected_id[BLOCK_SIZE];        // (256)
+	__shared__ float2 collected_xy[BLOCK_SIZE];     // (256,2): 记录高斯点的图像坐标
+    // (256,4): cov2D 的三个值(对阵矩阵), 透明度, 在 preprocess 中定义
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 
 	// Initialize helper variables
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
-	float C[CHANNELS] = { 0 };
+	float C[CHANNELS] = { 0 };  // C = [0.,0.,0.]
 
 	// Iterate over batches until all done or range is complete
+    // 以 256 为一批, 遍历 block 对应 range 内高斯点,
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
 		// End if entire block votes that it is done rasterizing
@@ -311,6 +332,8 @@ renderCUDA(
 			break;
 
 		// Collectively fetch per-Gaussian data from global to shared
+        // 同一线程块存储在同一缓冲区, 一个线程负责一个位置的存储,
+        // 一次只存储 256 个, 按从近到远的顺序存储高斯点信息
 		int progress = i * BLOCK_SIZE + block.thread_rank();
 		if (range.x + progress < range.y)
 		{
@@ -322,16 +345,17 @@ renderCUDA(
 		block.sync();
 
 		// Iterate over current batch
-		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
+		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)   // 防止剩余点数量低于 256
 		{
 			// Keep track of current position in range
-			contributor++;
+			contributor++;      // 已遍历高斯点数量
 
 			// Resample using conic matrix (cf. "Surface 
 			// Splatting" by Zwicker et al., 2001)
 			float2 xy = collected_xy[j];
-			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
-			float4 con_o = collected_conic_opacity[j];
+			float2 d = { xy.x - pixf.x, xy.y - pixf.y };    // 高斯点与像素点在 image 的距离
+			float4 con_o = collected_conic_opacity[j];      // con2D 与不透明度
+            // 2D 高斯椭圆
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 			if (power > 0.0f)
 				continue;
@@ -340,18 +364,20 @@ renderCUDA(
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp(power));     // 计算不透明度, 剔除过于透明的部分
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
+			if (test_T < 0.0001f)   // 衰减过大, 不考虑后续点
 			{
-				done = true;
-				continue;
+				done = true;        // 后续点不需要考虑, 在__syncthreads_count(done)中等待其他线程
+                                    // 随后的循环中缓存区存储依然执行，但不会进入内部循环
+				continue;           // 当 done 达到 256 时, 外层循环结束
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
+                // 使用 T 而非 test_T, 因为 T 是上一轮的总衰减
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
 			T = test_T;

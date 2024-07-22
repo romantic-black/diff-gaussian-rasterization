@@ -34,24 +34,24 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
 
 std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
-	const torch::Tensor& background,
-	const torch::Tensor& means3D,
-    const torch::Tensor& colors,
-    const torch::Tensor& opacity,
-	const torch::Tensor& scales,
-	const torch::Tensor& rotations,
-	const float scale_modifier,
-	const torch::Tensor& cov3D_precomp,
-	const torch::Tensor& viewmatrix,
-	const torch::Tensor& projmatrix,
-	const float tan_fovx, 
-	const float tan_fovy,
-    const int image_height,
-    const int image_width,
-	const torch::Tensor& sh,
-	const int degree,
-	const torch::Tensor& campos,
-	const bool prefiltered,
+	const torch::Tensor& background,        // [0,0,0]
+	const torch::Tensor& means3D,           // (N0,3)
+    const torch::Tensor& colors,            // []
+    const torch::Tensor& opacity,           // (N0,1)
+	const torch::Tensor& scales,            // (N0,3)
+	const torch::Tensor& rotations,         // (N0,4)
+	const float scale_modifier,             // 1.
+	const torch::Tensor& cov3D_precomp,     // []
+	const torch::Tensor& viewmatrix,        // (4,4)
+	const torch::Tensor& projmatrix,        // (4,4)
+	const float tan_fovx,                   // 0.84
+	const float tan_fovy,                   // 0.47
+    const int image_height,                 // 546
+    const int image_width,                  // 979
+	const torch::Tensor& sh,                // (N0,16,3)
+	const int degree,                       // 0
+	const torch::Tensor& campos,            // (3)
+	const bool prefiltered,                 // False
 	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
@@ -83,16 +83,16 @@ RasterizeGaussiansCUDA(
 	  int M = 0;
 	  if(sh.size(0) != 0)
 	  {
-		M = sh.size(1);
+		M = sh.size(1);         // 16
       }
 
 	  rendered = CudaRasterizer::Rasterizer::forward(
 	    geomFunc,
 		binningFunc,
 		imgFunc,
-	    P, degree, M,
+	    P, degree, M,        // N0, 0, 16
 		background.contiguous().data<float>(),
-		W, H,
+		W, H,       // 979, 546
 		means3D.contiguous().data<float>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
@@ -107,8 +107,8 @@ RasterizeGaussiansCUDA(
 		tan_fovx,
 		tan_fovy,
 		prefiltered,
-		out_color.contiguous().data<float>(),
-		radii.contiguous().data<int>(),
+		out_color.contiguous().data<float>(),   // (3,H,W)[0]
+		radii.contiguous().data<int>(),     // (N0)[0]
 		debug);
   }
   return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer);
