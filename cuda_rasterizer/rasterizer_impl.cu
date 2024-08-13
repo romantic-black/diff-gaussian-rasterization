@@ -116,21 +116,22 @@ __global__ void duplicateWithKeys(
 // Check keys to see if it is at the start/end of one tile's range in 
 // the full sorted list. If yes, write start/end of this tile. 
 // Run once per instanced (duplicated) Gaussian ID.
+// << <(num_rendered + 255) / 256, 256 >> >
 __global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* ranges)
 {
 	auto idx = cg::this_grid().thread_rank();
-	if (idx >= L)
+	if (idx >= L)       // L: point_list_keys 的长度, B
 		return;
 
 	// Read tile ID from key. Update start/end of tile range if at limit.
-	uint64_t key = point_list_keys[idx];
-	uint32_t currtile = key >> 32;
+	uint64_t key = point_list_keys[idx];    // (B)
+	uint32_t currtile = key >> 32;          // 获取 tile ID
 	if (idx == 0)
 		ranges[currtile].x = 0;
 	else
 	{
 		uint32_t prevtile = point_list_keys[idx - 1] >> 32;
-		if (currtile != prevtile)
+		if (currtile != prevtile)           // 变化位置说明 tile 结束
 		{
 			ranges[prevtile].y = idx;
 			ranges[currtile].x = idx;
@@ -401,9 +402,9 @@ void CudaRasterizer::Rasterizer::backward(
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
 	CHECK_CUDA(BACKWARD::render(
-		tile_grid,
-		block,
-		imgState.ranges,
+		tile_grid,                  // 值为 (979+16-1)/16, 同理, 1
+		block,                      // 值为 16, 16, 1
+		imgState.ranges,            //
 		binningState.point_list,
 		width, height,
 		background,

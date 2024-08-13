@@ -44,7 +44,7 @@ def rasterize_gaussians(
 class _RasterizeGaussians(torch.autograd.Function):
     @staticmethod
     def forward(
-        ctx,
+        ctx,        # 在前向传播中保存的参数和上下文信息
         means3D,
         means2D,
         sh,
@@ -98,7 +98,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         return color, radii
 
     @staticmethod
-    def backward(ctx, grad_out_color, _):
+    def backward(ctx, grad_out_color, _):   # 对应 forward 中的输出, 其中 radii 无需跟踪
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
@@ -140,7 +140,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         else:
              grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
 
-        grads = (
+        grads = (       # 对应 forward 中的输入
             grad_means3D,
             grad_means2D,
             grad_sh,

@@ -154,31 +154,31 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 // Perform initial steps for each Gaussian prior to rasterization.
 // << <(P + 255) / 256, 256 >> >
 template<int C>
-__global__ void preprocessCUDA(int P, int D, int M,
-	const float* orig_points,
-	const glm::vec3* scales,
+__global__ void preprocessCUDA(int P, int D, int M,     // N, 3, 16
+	const float* orig_points,       // (N, 3): 点云的3D坐标
+	const glm::vec3* scales,        // (N, 3): 椭圆大小
 	const float scale_modifier,
-	const glm::vec4* rotations,
-	const float* opacities,
-	const float* shs,
-	bool* clamped,
-	const float* cov3D_precomp,
-	const float* colors_precomp,
-	const float* viewmatrix,
-	const float* projmatrix,
-	const glm::vec3* cam_pos,
-	const int W, int H,
+	const glm::vec4* rotations,     // (N, 4): 旋转角度
+	const float* opacities,         // (N, 1): 透明度
+	const float* shs,               // (N, 16, 3): 色彩的球谐函数
+	bool* clamped,                  // 输出, sh 转 rgb 时使用
+	const float* cov3D_precomp,     // null
+	const float* colors_precomp,    // null
+	const float* viewmatrix,        // (4,4)
+	const float* projmatrix,        // (4,4)
+	const glm::vec3* cam_pos,       // (3)
+	const int W, int H,             // 979, 546
 	const float tan_fovx, float tan_fovy,
 	const float focal_x, float focal_y,
-	int* radii,
-	float2* points_xy_image,
-	float* depths,
-	float* cov3Ds,
-	float* rgb,
-	float4* conic_opacity,
-	const dim3 grid,
-	uint32_t* tiles_touched,
-	bool prefiltered)
+	int* radii,                     // (N, 1): 输出, 屏幕空间内椭圆的最大泼溅半径
+	float2* points_xy_image,        // (N, 2): 输出, 屏幕空间内椭圆位置
+	float* depths,                  //
+	float* cov3Ds,                  //
+	float* rgb,                     //
+	float4* conic_opacity,          // (N, 4): 输出, { conic.x, conic.y, conic.z, opacities[idx] }
+	const dim3 grid,                // 值为 (979+16-1)/16, 同理, 1
+	uint32_t* tiles_touched,        // (N, 1): 输出, 屏幕空间椭圆的最大矩形占用的 grid 数量
+	bool prefiltered)               // False
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P)
@@ -304,7 +304,7 @@ renderCUDA(
 	// Load start/end range of IDs to process in bit sorted list.
     // 注意, 上面的都是图像的像素, range 中的索引是高斯点索引
     // range: 每个 block 中高斯点的 [开始索引, 结束索引] 按深度排序
-    // ranges: ((W+16-1)1/16, (H+16-1)/16, 2)
+    // ranges: ((W+16-1)/16, (H+16-1)/16, 2)
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
     // rounds: 需要几次 for 循环
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);

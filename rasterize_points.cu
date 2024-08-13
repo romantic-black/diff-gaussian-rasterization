@@ -49,7 +49,7 @@ RasterizeGaussiansCUDA(
     const int image_height,                 // 546
     const int image_width,                  // 979
 	const torch::Tensor& sh,                // (N0,16,3)
-	const int degree,                       // 0
+	const int degree,                       // 3
 	const torch::Tensor& campos,            // (3)
 	const bool prefiltered,                 // False
 	const bool debug)
