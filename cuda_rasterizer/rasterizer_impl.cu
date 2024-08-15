@@ -284,7 +284,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
-    // point_offsets: 输出, 其他后续不使用
+    // point_offsets: 输出
 	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
 
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
@@ -302,8 +302,8 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.means2D,
 		geomState.depths,
 		geomState.point_offsets,
-		binningState.point_list_keys_unsorted,  // (N0)
-		binningState.point_list_unsorted,       // (N0)
+		binningState.point_list_keys_unsorted,
+		binningState.point_list_unsorted,
 		radii,
 		tile_grid)
 	CHECK_CUDA(, debug)

@@ -273,7 +273,7 @@ __global__ void preprocessCUDA(int P, int D, int M,     // N, 3, 16
 template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
-	const uint2* __restrict__ ranges,           // 编译器可以假设这些指针所指向的内存不会被其他指针修改或读取
+	const uint2* __restrict__ ranges,           // __restrict__: 编译器可以假设这些指针所指向的内存不会被其他指针修改或读取
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
@@ -355,7 +355,7 @@ renderCUDA(
 			float2 xy = collected_xy[j];
 			float2 d = { xy.x - pixf.x, xy.y - pixf.y };    // 高斯点与像素点在 image 的距离
 			float4 con_o = collected_conic_opacity[j];      // con2D 与不透明度
-            // 2D 高斯椭圆
+            // 2D 高斯椭圆, 椭圆中心色彩为 rgb, tile 中心与椭圆中心距离为 d, 因此衰减如下
 			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
 			if (power > 0.0f)
 				continue;

@@ -46,7 +46,7 @@ class _RasterizeGaussians(torch.autograd.Function):
     def forward(
         ctx,        # 在前向传播中保存的参数和上下文信息
         means3D,
-        means2D,
+        means2D,    # 为了获取 means2D 的梯度所以引入
         sh,
         colors_precomp,
         opacities,

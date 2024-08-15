@@ -139,10 +139,11 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 // Backward version of INVERSE 2D covariance matrix computation
 // (due to length launched as separate kernel before other 
 // backward steps contained in preprocess)
+// << <(P + 255) / 256, 256 >> >
 __global__ void computeCov2DCUDA(int P,
 	const float3* means,
 	const int* radii,
-	const float* cov3Ds,
+	const float* cov3Ds,        // (N, 6): forward preprocess 中计算的高斯点 3D 协方差矩阵
 	const float h_x, float h_y,
 	const float tan_fovx, float tan_fovy,
 	const float* view_matrix,
@@ -160,6 +161,7 @@ __global__ void computeCov2DCUDA(int P,
 	// Fetch gradients, recompute 2D covariance and relevant 
 	// intermediate forward results needed in the backward.
 	float3 mean = means[idx];
+    // conic 是对称的, 因此跳过第三项
 	float3 dL_dconic = { dL_dconics[4 * idx], dL_dconics[4 * idx + 1], dL_dconics[4 * idx + 3] };
 	float3 t = transformPoint4x3(mean, view_matrix);
 	
