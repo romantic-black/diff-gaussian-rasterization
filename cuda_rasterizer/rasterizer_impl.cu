@@ -404,8 +404,9 @@ void CudaRasterizer::Rasterizer::backward(
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,                  // 值为 (979+16-1)/16, 同理, 1
 		block,                      // 值为 16, 16, 1
-		imgState.ranges,            //
-		binningState.point_list,
+		imgState.ranges,            // ((W+16-1)1/16, (H+16-1)/16, 2), 虽然定义时是 W*H, 但实际只用了前面一小部分
+                                    // 指示 point_list 中 idx 对应 tile 的范围
+		binningState.point_list,    // (B)[idx], 排序完的索引, 注意索引可能重复, 因为一个点可能泼溅到多个 tile 上
 		width, height,
 		background,
 		geomState.means2D,
@@ -413,7 +414,13 @@ void CudaRasterizer::Rasterizer::backward(
 		color_ptr,
 		imgState.accum_alpha,
 		imgState.n_contrib,
-		dL_dpix,
+        /*
+         *  forward 中计算的值, (W*H)
+         * 	accum_alpha: final_T[pix_id] = T;
+         * 	n_contrib: n_contrib[pix_id] = last_contributor;
+         * */
+		dL_dpix,                    // 输入, 图像颜色的梯度, (W*H)
+        // 下面都是输出
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,

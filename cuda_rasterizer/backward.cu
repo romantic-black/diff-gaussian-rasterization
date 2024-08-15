@@ -29,7 +29,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	// Use PyTorch rule for clamping: if clamping was applied,
 	// gradient becomes 0.
 	glm::vec3 dL_dRGB = dL_dcolor[idx];
-	dL_dRGB.x *= clamped[3 * idx + 0] ? 0 : 1;
+	dL_dRGB.x *= clamped[3 * idx + 0] ? 0 : 1;  // sh 输出负 rgb 时不计算梯度
 	dL_dRGB.y *= clamped[3 * idx + 1] ? 0 : 1;
 	dL_dRGB.z *= clamped[3 * idx + 2] ? 0 : 1;
 
@@ -124,13 +124,11 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 		}
 	}
 
-	// The view direction is an input to the computation. View direction
-	// is influenced by the Gaussian's mean, so SHs gradients
-	// must propagate back into 3D position.
+    // 注意上面很多量都是 3维向量, 上面的 * 都是点乘, 下面这才是内积
 	glm::vec3 dL_ddir(glm::dot(dRGBdx, dL_dRGB), glm::dot(dRGBdy, dL_dRGB), glm::dot(dRGBdz, dL_dRGB));
 
-	// Account for normalization of direction
-	float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
+    // 观察角与高斯点位置相关, 所以上面 xyz 的梯度要转换为高斯点梯度
+    float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
 
 	// Gradients of loss w.r.t. Gaussian means, but only the portion 
 	// that is caused because the mean affects the view-dependent color.
@@ -396,6 +394,7 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
+// << <grid: ((W+16-1)/16, (H+16-1)/16, 1), block: (16,16,1) >> >
 template <uint32_t C>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
@@ -430,8 +429,8 @@ renderCUDA(
 
 	bool done = !inside;
 	int toDo = range.y - range.x;
-
-	__shared__ int collected_id[BLOCK_SIZE];
+    // 共享内存是每个线程块（block）中所有线程可以共享访问的内存区域, 访问共享内存的速度更快
+	__shared__ int collected_id[BLOCK_SIZE];    // (256)
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
@@ -450,7 +449,7 @@ renderCUDA(
 	float dL_dpixel[C];
 	if (inside)
 		for (int i = 0; i < C; i++)
-			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];  // 输入的图像颜色梯度
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
@@ -460,7 +459,7 @@ renderCUDA(
 	const float ddelx_dx = 0.5 * W;
 	const float ddely_dy = 0.5 * H;
 
-	// Traverse all Gaussians
+	// 遍历 tile 中所有高斯点
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
 		// Load auxiliary data into shared memory, start in the BACK
@@ -484,7 +483,7 @@ renderCUDA(
 			// Keep track of current Gaussian ID. Skip, if this one
 			// is behind the last contributor for this pixel.
 			contributor--;
-			if (contributor >= last_contributor)
+			if (contributor >= last_contributor)    // 按 depth 从远到近的顺序, 跳过忽略掉的高斯点
 				continue;
 
 			// Compute blending values, as before.

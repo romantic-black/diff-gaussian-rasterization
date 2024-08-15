@@ -31,7 +31,7 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 
 	if (deg > 0)
 	{
-		float x = dir.x;
+		float x = dir.x;    // 注意: xyz 不是高斯点位置, 而是观察角度
 		float y = dir.y;
 		float z = dir.z;
 		result = result - SH_C1 * y * sh[1] + SH_C1 * z * sh[2] - SH_C1 * x * sh[3];
@@ -60,10 +60,10 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 			}
 		}
 	}
+    // 稍微提高一下亮度？
 	result += 0.5f;
 
-	// RGB colors are clamped to positive values. If values are
-	// clamped, we need to keep track of this for the backward pass.
+    // 确保计算出的颜色非负并记录, 反向传播阶段时额外处理
 	clamped[3 * idx + 0] = (result.x < 0);
 	clamped[3 * idx + 1] = (result.y < 0);
 	clamped[3 * idx + 2] = (result.z < 0);
@@ -161,7 +161,7 @@ __global__ void preprocessCUDA(int P, int D, int M,     // N, 3, 16
 	const glm::vec4* rotations,     // (N, 4): 旋转角度
 	const float* opacities,         // (N, 1): 透明度
 	const float* shs,               // (N, 16, 3): 色彩的球谐函数
-	bool* clamped,                  // 输出, sh 转 rgb 时使用
+	bool* clamped,                  // 输出, sh 转 rgb 时使用, 记录输出 rgb 是否为负数
 	const float* cov3D_precomp,     // null
 	const float* colors_precomp,    // null
 	const float* viewmatrix,        // (4,4)
@@ -273,7 +273,7 @@ __global__ void preprocessCUDA(int P, int D, int M,     // N, 3, 16
 template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
-	const uint2* __restrict__ ranges,
+	const uint2* __restrict__ ranges,           // 编译器可以假设这些指针所指向的内存不会被其他指针修改或读取
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
